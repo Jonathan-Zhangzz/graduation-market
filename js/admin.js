@@ -15,7 +15,7 @@ const GITHUB_REPO   = 'graduation-market';              // 仓库名
 const GITHUB_LABEL  = 'product';                        // Issue 标签（用于区分商品数据）
 
 
-// ===== GitHub Issues API 封装 =====
+// ===== GitHub Issues API =====
 const GH = {
   headers() {
     return {
@@ -28,22 +28,25 @@ const GH = {
     return `https://api.github.com/repos/${GITHUB_OWNER}/${GITHUB_REPO}/issues`;
   },
 
-  // 创建商品（新建 Issue）
   async createProduct(product) {
     const res = await fetch(this.baseUrl(), {
       method: 'POST',
       headers: this.headers(),
       body: JSON.stringify({
         title: product.name,
-        body: JSON.stringify(product),   // 把完整商品数据存在 Issue body 里
+        body: JSON.stringify(product),
         labels: [GITHUB_LABEL]
       })
     });
-    if (!res.ok) throw new Error('发布失败，请检查 Token 和仓库配置');
+    // ★ 详细错误信息
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      const msg = errBody.message || res.status;
+      throw new Error(`GitHub API 错误(${res.status})：${msg}`);
+    }
     return await res.json();
   },
 
-  // 获取所有商品（读取 Issues）
   async getProducts() {
     const res = await fetch(
       `${this.baseUrl()}?labels=${GITHUB_LABEL}&state=open&per_page=100`,
@@ -51,58 +54,59 @@ const GH = {
     );
     if (!res.ok) return [];
     const issues = await res.json();
-    return issues.map(issue => {
-      try {
-        const p = JSON.parse(issue.body);
-        p._issueNumber = issue.number; // 记录 Issue 编号，用于后续关闭/更新
-        return p;
-      } catch { return null; }
-    }).filter(Boolean);
+    // 过滤掉 Pull Request（GitHub API 会把 PR 也当 issue 返回）
+    return issues
+      .filter(i => !i.pull_request)
+      .map(issue => {
+        try {
+          const p = JSON.parse(issue.body);
+          p._issueNumber = issue.number;
+          // 同步 sold 状态（通过 label 判断）
+          const labelNames = issue.labels.map(l => l.name);
+          if (labelNames.includes('sold')) p.status = 'sold';
+          return p;
+        } catch { return null; }
+      }).filter(Boolean);
   },
 
-  // 标记售出（给 Issue 加 sold 标签）
-  async markSold(issueNumber) {
-    // 先获取当前 labels
-    const res = await fetch(`${this.baseUrl()}/${issueNumber}`, { headers: this.headers() });
-    const issue = await res.json();
-    const labels = issue.labels.map(l => l.name).filter(l => l !== GITHUB_LABEL);
-    labels.push('sold');
-
-    await fetch(`${this.baseUrl()}/${issueNumber}`, {
+  async patchIssue(issueNumber, data) {
+    const res = await fetch(`${this.baseUrl()}/${issueNumber}`, {
       method: 'PATCH',
       headers: this.headers(),
-      body: JSON.stringify({ labels })
+      body: JSON.stringify(data)
     });
+    if (!res.ok) {
+      const errBody = await res.json().catch(() => ({}));
+      throw new Error(`操作失败(${res.status})：${errBody.message || ''}`);
+    }
+    return await res.json();
   },
 
-  // 恢复在售（移除 sold 标签）
+  async markSold(issueNumber) {
+    // 获取当前 labels，加上 sold
+    const res = await fetch(`${this.baseUrl()}/${issueNumber}`, { headers: this.headers() });
+    const issue = await res.json();
+    const labels = [...new Set([...issue.labels.map(l => l.name), 'sold'])];
+    await this.patchIssue(issueNumber, { labels });
+  },
+
   async markRestore(issueNumber) {
     const res = await fetch(`${this.baseUrl()}/${issueNumber}`, { headers: this.headers() });
     const issue = await res.json();
     const labels = issue.labels.map(l => l.name).filter(l => l !== 'sold');
-
-    await fetch(`${this.baseUrl()}/${issueNumber}`, {
-      method: 'PATCH',
-      headers: this.headers(),
-      body: JSON.stringify({ labels })
-    });
+    await this.patchIssue(issueNumber, { labels });
   },
 
-  // 删除商品（关闭 Issue）
   async deleteProduct(issueNumber) {
-    await fetch(`${this.baseUrl()}/${issueNumber}`, {
-      method: 'PATCH',
-      headers: this.headers(),
-      body: JSON.stringify({ state: 'closed' })
-    });
+    await this.patchIssue(issueNumber, { state: 'closed' });
   }
 };
 
-// ===== 本地缓存（加速渲染，减少 API 请求）=====
+// ===== 本地缓存 =====
 const DB = {
-  get()   { try { return JSON.parse(localStorage.getItem('gm_products_cache') || '[]'); } catch { return []; } },
-  save(d) { localStorage.setItem('gm_products_cache', JSON.stringify(d)); },
-  getContact()   { try { return JSON.parse(localStorage.getItem('gm_contact') || '{}'); } catch { return {}; } },
+  get()        { try { return JSON.parse(localStorage.getItem('gm_products_cache') || '[]'); } catch { return []; } },
+  save(d)      { localStorage.setItem('gm_products_cache', JSON.stringify(d)); },
+  getContact() { try { return JSON.parse(localStorage.getItem('gm_contact') || '{}'); } catch { return {}; } },
   saveContact(c) { localStorage.setItem('gm_contact', JSON.stringify(c)); }
 };
 
@@ -110,16 +114,19 @@ const DB = {
 function checkAuth() { return sessionStorage.getItem('gm_admin') === '1'; }
 function genId()     { return Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
 
-function showToast(msg) {
+function showToast(msg, isError = false) {
   const t = document.getElementById('toast');
   t.textContent = msg;
+  t.style.background = isError ? '#d63031' : '#00b894';
   t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 2800);
+  setTimeout(() => t.classList.remove('show'), 4000); // 错误提示显示更久
 }
 
-function setLoading(isLoading) {
-  const overlay = document.getElementById('loadingOverlay');
-  if (overlay) overlay.style.display = isLoading ? 'flex' : 'none';
+function setLoading(isLoading, msg = '') {
+  const btn = document.getElementById('submitBtn');
+  if (!btn) return;
+  btn.disabled    = isLoading;
+  btn.textContent = isLoading ? (msg || '⏳ 处理中...') : '🚀 发布商品';
 }
 
 // ===== 上传图片到 Cloudinary =====
@@ -132,7 +139,7 @@ async function uploadImageToCloudinary(file) {
   const res = await fetch(url, { method: 'POST', body: form });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error?.message || '图片上传失败');
+    throw new Error(`Cloudinary 上传失败：${err.error?.message || res.status}`);
   }
   const data = await res.json();
   return data.secure_url.replace('/upload/', '/upload/q_auto,f_auto,w_800/');
@@ -142,8 +149,8 @@ async function uploadImageToCloudinary(file) {
 function handleImagePreview(input) {
   const file = input.files[0];
   if (!file) return;
-  if (!file.type.startsWith('image/')) { showToast('⚠️ 请选择图片文件'); input.value = ''; return; }
-  if (file.size > 10 * 1024 * 1024)   { showToast('⚠️ 图片不能超过 10MB'); input.value = ''; return; }
+  if (!file.type.startsWith('image/')) { showToast('⚠️ 请选择图片文件', true); input.value = ''; return; }
+  if (file.size > 10 * 1024 * 1024)   { showToast('⚠️ 图片不能超过 10MB', true); input.value = ''; return; }
 
   const reader = new FileReader();
   reader.onload = e => {
@@ -183,29 +190,26 @@ function renderList(products) {
       <div class="item-price">¥${p.price}</div>
       <div class="item-actions">
         ${p.status !== 'sold'
-          ? `<button class="btn-sold"    onclick="markSold('${p._issueNumber}')">售出</button>`
-          : `<button class="btn-restore" onclick="markRestore('${p._issueNumber}')">恢复</button>`}
-        <button class="btn-delete" onclick="deleteProduct('${p._issueNumber}')">删除</button>
+          ? `<button class="btn-sold"    onclick="markSold(${p._issueNumber})">售出</button>`
+          : `<button class="btn-restore" onclick="markRestore(${p._issueNumber})">恢复</button>`}
+        <button class="btn-delete" onclick="deleteProduct(${p._issueNumber})">删除</button>
       </div>
     </div>
   `).join('');
 }
 
-// ===== 从云端加载商品列表 =====
+// ===== 从云端加载商品 =====
 async function loadProducts() {
-  // 先用本地缓存快速渲染
   const cached = DB.get();
   if (cached.length > 0) { renderStats(cached); renderList(cached); }
-
-  // 再从 GitHub 拉取最新数据
   try {
     const products = await GH.getProducts();
     DB.save(products);
     renderStats(products);
     renderList(products);
   } catch (err) {
-    console.error(err);
-    showToast('⚠️ 加载商品失败，请检查网络');
+    console.error('loadProducts error:', err);
+    showToast(`⚠️ 加载失败：${err.message}`, true);
   }
 }
 
@@ -221,23 +225,18 @@ async function handleAddProduct(e) {
   const file      = fileInput.files[0];
 
   if (!name || isNaN(price) || price < 0) {
-    showToast('⚠️ 请填写完整的商品名称和价格');
+    showToast('⚠️ 请填写完整的商品名称和价格', true);
     return;
   }
-
-  const btn = document.getElementById('submitBtn');
-  btn.disabled = true;
-  btn.textContent = '⏳ 处理中...';
-  setLoading(true);
 
   try {
     let imageUrl = '';
     if (file) {
-      btn.textContent = '📤 上传图片中...';
+      setLoading(true, '📤 上传图片中...');
       imageUrl = await uploadImageToCloudinary(file);
     }
 
-    btn.textContent = '☁️ 同步到云端...';
+    setLoading(true, '☁️ 同步云端中...');
     const product = {
       id: genId(), name, price, category,
       image: imageUrl,
@@ -246,56 +245,47 @@ async function handleAddProduct(e) {
       createdAt: new Date().toLocaleDateString('zh-CN')
     };
 
-    await GH.createProduct(product);
+    await GH.createProduct(product); // ← 任何错误都会在这里抛出，不会静默失败
 
-    // 重置表单
     e.target.reset();
     document.getElementById('previewWrap').style.display = 'none';
     document.getElementById('uploadLabel').textContent   = '📷 点击选择图片';
 
-    showToast('✅ 商品已发布，同步云端成功！');
-    await loadProducts(); // 刷新列表
+    showToast('✅ 商品已发布，全网同步成功！');
+    await loadProducts();
 
   } catch (err) {
-    console.error(err);
-    showToast(`❌ 失败：${err.message}`);
+    console.error('handleAddProduct error:', err);
+    showToast(`❌ ${err.message}`, true); // ← 错误信息直接显示给你
   } finally {
-    btn.disabled    = false;
-    btn.textContent = '🚀 发布商品';
     setLoading(false);
   }
 }
 
-// ===== 标记售出 / 恢复 / 删除 =====
+// ===== 售出 / 恢复 / 删除 =====
 async function markSold(issueNumber) {
-  setLoading(true);
   try {
     await GH.markSold(issueNumber);
     showToast('✅ 已标记为售出');
     await loadProducts();
-  } catch { showToast('❌ 操作失败'); }
-  finally { setLoading(false); }
+  } catch (err) { showToast(`❌ ${err.message}`, true); }
 }
 
 async function markRestore(issueNumber) {
-  setLoading(true);
   try {
     await GH.markRestore(issueNumber);
     showToast('🔄 已恢复为在售');
     await loadProducts();
-  } catch { showToast('❌ 操作失败'); }
-  finally { setLoading(false); }
+  } catch (err) { showToast(`❌ ${err.message}`, true); }
 }
 
 async function deleteProduct(issueNumber) {
   if (!confirm('确定要删除这件商品吗？')) return;
-  setLoading(true);
   try {
     await GH.deleteProduct(issueNumber);
     showToast('🗑️ 已删除');
     await loadProducts();
-  } catch { showToast('❌ 操作失败'); }
-  finally { setLoading(false); }
+  } catch (err) { showToast(`❌ ${err.message}`, true); }
 }
 
 // ===== 保存联系方式 =====
@@ -330,4 +320,3 @@ document.addEventListener('DOMContentLoaded', async () => {
     location.href = 'login.html';
   });
 });
-
