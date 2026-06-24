@@ -9,7 +9,7 @@ const ADMIN_PASSWORD = 'zjl20031114'; // 与 login.html 保持一致
 // js/admin.js
 
 
-const GITHUB_TOKEN  = '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';               // ghp_xxxxxxxxxxxx
+const GITHUB_TOKEN  = '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';               // ghp_xxxxxxxxxxxx
 const GITHUB_OWNER  = 'Jonathan-Zhangzz';               // 如: zhangsan
 const GITHUB_REPO   = 'graduation-market';              // 仓库名
 const GITHUB_LABEL  = 'product';                        // Issue 标签（用于区分商品数据）
