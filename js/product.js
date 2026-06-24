@@ -36,7 +36,7 @@ function renderDetail() {
         <div class="detail-desc">${product.description || '卖家暂未填写描述'}</div>
         <div class="contact-card">
           <h3>📬 购买方式</h3>
-          <p style="font-size:13px;color:#000000;margin-bottom:12px">请线下联系摊主交易～</p>
+          <p style="font-size:13px;color:#FFFFFF;margin-bottom:12px">请线下联系摊主交易～</p>
           ${contact.wechat ? `<div class="contact-row"><span class="icon">💬</span><span>微信：<strong>${contact.wechat}</strong></span></div>` : ''}
           ${contact.phone  ? `<div class="contact-row"><span class="icon">📞</span><span>电话：<strong>${contact.phone}</strong></span></div>`  : ''}
           ${contact.note   ? `<div class="contact-row"><span class="icon">📍</span><span>${contact.note}</span></div>` : ''}
