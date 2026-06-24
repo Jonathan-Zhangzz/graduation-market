@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>后台登录 — 毕业市集</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="icon">🔐</div>
+      <h1>后台管理</h1>
+      <p>请输入管理员密码</p>
+
+      <form id="loginForm">
+        <div class="form-group">
+          <label>管理员密码</label>
+          <input type="password" id="password" placeholder="请输入密码" required>
+        </div>
+        <button type="submit" class="btn-primary" style="margin-top:8px">登 录</button>
+      </form>
+
+      <p id="errMsg" style="color:#ff6b6b;font-size:13px;margin-top:12px;display:none">
+        ❌ 密码错误，请重试
+      </p>
+    </div>
+  </div>
+
+  <script>
+    // 已登录则直接跳转
+    if (sessionStorage.getItem('gm_admin') === '1') {
+      location.href = 'dashboard.html';
+    }
+
+    const ADMIN_PASSWORD = 'zjl20031114'; // ⚠️ 与 admin.js 保持一致
+
+    document.getElementById('loginForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      const pwd = document.getElementById('password').value;
+      if (pwd === ADMIN_PASSWORD) {
+        sessionStorage.setItem('gm_admin', '1');
+        location.href = 'dashboard.html';
+      } else {
+        document.getElementById('errMsg').style.display = 'block';
+      }
+    });
+  </script>
+</body>
+</html>
